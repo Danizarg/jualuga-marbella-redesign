@@ -2,13 +2,10 @@
 
 import Image from "next/image";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { PropertyImage } from "@/data/properties";
 import { BLUR_SAND, resolveImages } from "@/lib/images";
-
-const EASE = [0.16, 1, 0.3, 1] as const;
 
 /** Column spans that cycle to give the grid a magazine rhythm. */
 const SPANS = [7, 5, 5, 7, 12];
@@ -19,6 +16,20 @@ const SPAN_CLASS: Record<number, string> = {
   12: "md:col-span-12",
 };
 
+/**
+ * Property gallery: an editorial thumbnail grid plus a fullscreen lightbox.
+ *
+ * Both animations are CSS. The lightbox was originally built with Motion's
+ * AnimatePresence, but the nested presence animation used for the image
+ * crossfade stopped the outer exit from completing, so the overlay stayed on
+ * screen after closing. Conditional rendering plus a CSS entry animation is
+ * deterministic, and the image crossfade comes free from keying the frame on
+ * the image source so it remounts and replays.
+ *
+ * The lightbox is portalled to <body>: the page-transition wrapper animates
+ * `transform`, which creates a stacking context, and a `fixed` overlay inside
+ * it would be positioned against that wrapper and sit under the header.
+ */
 export function Gallery({
   images,
   title,
@@ -27,7 +38,6 @@ export function Gallery({
   title: string;
 }) {
   const resolved = resolveImages(images);
-  const reduced = useReducedMotion();
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const triggers = useRef<(HTMLButtonElement | null)[]>([]);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -37,21 +47,22 @@ export function Gallery({
 
   const step = useCallback(
     (delta: number) => {
-      setOpenIndex((current) => {
-        if (current === null) return current;
-        return (current + delta + resolved.length) % resolved.length;
-      });
+      setOpenIndex((current) =>
+        current === null
+          ? current
+          : (current + delta + resolved.length) % resolved.length,
+      );
     },
     [resolved.length],
   );
 
   const isOpen = openIndex !== null;
 
-  // Remember which thumbnail opened the lightbox so focus can go back to it.
   useEffect(() => {
     if (openIndex !== null) lastOpened.current = openIndex;
   }, [openIndex]);
 
+  // Hold the page still behind the overlay.
   useEffect(() => {
     if (!isOpen) return;
     const { body } = document;
@@ -62,14 +73,9 @@ export function Gallery({
     };
   }, [isOpen]);
 
+  // Escape closes, arrows step, Tab stays inside the dialog.
   useEffect(() => {
-    if (!isOpen) {
-      if (lastOpened.current !== null) {
-        triggers.current[lastOpened.current]?.focus();
-        lastOpened.current = null;
-      }
-      return;
-    }
+    if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -98,14 +104,19 @@ export function Gallery({
     return () => document.removeEventListener("keydown", onKey);
   }, [isOpen, close, step]);
 
-  const current = openIndex !== null ? resolved[openIndex] : null;
+  // Move focus into the dialog on open, and back to its thumbnail on close.
+  useEffect(() => {
+    if (isOpen) {
+      dialogRef.current?.querySelector("button")?.focus();
+      return;
+    }
+    if (lastOpened.current !== null) {
+      triggers.current[lastOpened.current]?.focus();
+      lastOpened.current = null;
+    }
+  }, [isOpen]);
 
-  // The page-transition wrapper animates `transform`, which creates a
-  // stacking context: a `fixed` overlay rendered inside it is positioned
-  // against that wrapper rather than the viewport, and its z-index cannot
-  // out-rank the header. The lightbox therefore goes straight to <body>.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const current = openIndex !== null ? resolved[openIndex] : null;
 
   return (
     <>
@@ -115,7 +126,6 @@ export function Gallery({
           const portrait = image.height > image.width;
           return (
             <li key={`${image.src}-${i}`} className={SPAN_CLASS[span]}>
-              {/* CSS reveal, so thumbnails are never blank pre-hydration */}
               <div
                 className="reveal-up"
                 style={
@@ -169,51 +179,42 @@ export function Gallery({
         })}
       </ul>
 
-      {mounted
+      {isOpen && current
         ? createPortal(
-            <AnimatePresence>
-              {isOpen && current ? (
-                <motion.div
-                  ref={dialogRef}
-                  role="dialog"
-            aria-modal="true"
-            aria-label={`Galería de ${title}`}
-            className="fixed inset-0 z-[100] flex flex-col bg-ink"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduced ? 0.15 : 0.5, ease: EASE }}
-          >
-            <div className="flex h-16 shrink-0 items-center justify-between px-[var(--gutter)] md:h-20">
-              <p className="label text-paper/60">
-                <span className="text-paper">
-                  {String(openIndex + 1).padStart(2, "0")}
-                </span>
-                {" / "}
-                {String(resolved.length).padStart(2, "0")}
-              </p>
-              <button
-                type="button"
-                onClick={close}
-                className="label flex items-center gap-3 text-paper/70 transition-colors duration-500 hover:text-paper"
-              >
-                Cerrar
-                <span aria-hidden className="relative block size-4">
-                  <span className="absolute top-1/2 left-0 h-px w-full rotate-45 bg-current" />
-                  <span className="absolute top-1/2 left-0 h-px w-full -rotate-45 bg-current" />
-                </span>
-              </button>
-            </div>
+            <div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Galería de ${title}`}
+              className="lightbox-in fixed inset-0 z-[100] flex flex-col bg-ink"
+            >
+              <div className="flex h-16 shrink-0 items-center justify-between px-[var(--gutter)] md:h-20">
+                <p className="label text-paper/60">
+                  <span className="text-paper">
+                    {String(openIndex + 1).padStart(2, "0")}
+                  </span>
+                  {" / "}
+                  {String(resolved.length).padStart(2, "0")}
+                </p>
+                <button
+                  type="button"
+                  onClick={close}
+                  className="label flex items-center gap-3 text-paper/70 transition-colors duration-500 hover:text-paper"
+                >
+                  Cerrar
+                  <span aria-hidden className="relative block size-4">
+                    <span className="absolute top-1/2 left-0 h-px w-full rotate-45 bg-current" />
+                    <span className="absolute top-1/2 left-0 h-px w-full -rotate-45 bg-current" />
+                  </span>
+                </button>
+              </div>
 
-            <div className="relative flex min-h-0 flex-1 items-center justify-center px-[var(--gutter)] pb-4">
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
+              <div className="relative flex min-h-0 flex-1 items-center justify-center px-[var(--gutter)] pb-4">
+                {/* Keyed on the source so changing image remounts the frame
+                    and replays the CSS fade. */}
+                <div
                   key={current.src}
-                  className="relative flex h-full w-full items-center justify-center"
-                  initial={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.985 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.995 }}
-                  transition={{ duration: reduced ? 0.12 : 0.55, ease: EASE }}
+                  className="frame-in relative flex h-full w-full items-center justify-center"
                 >
                   <Image
                     src={current.src}
@@ -231,40 +232,37 @@ export function Gallery({
                       maxWidth: `min(100%, ${Math.round(current.width * 1.6)}px)`,
                     }}
                   />
-                </motion.div>
-              </AnimatePresence>
-            </div>
-
-            <div className="flex shrink-0 items-center justify-between gap-6 px-[var(--gutter)] pb-6">
-              <p className="max-w-xl text-[0.8125rem] leading-relaxed font-light text-paper/60">
-                {current.alt}
-              </p>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => step(-1)}
-                  className="label border border-paper/25 px-4 py-3 text-paper/80 transition-colors duration-500 hover:border-paper hover:text-paper"
-                  aria-label="Imagen anterior"
-                >
-                  <svg aria-hidden viewBox="0 0 24 10" className="h-2 w-5 rotate-180" fill="none">
-                    <path d="M0 5h22M17.5 0.5 22 5l-4.5 4.5" stroke="currentColor" strokeWidth="1" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => step(1)}
-                  className="label border border-paper/25 px-4 py-3 text-paper/80 transition-colors duration-500 hover:border-paper hover:text-paper"
-                  aria-label="Imagen siguiente"
-                >
-                  <svg aria-hidden viewBox="0 0 24 10" className="h-2 w-5" fill="none">
-                    <path d="M0 5h22M17.5 0.5 22 5l-4.5 4.5" stroke="currentColor" strokeWidth="1" />
-                  </svg>
-                </button>
+                </div>
               </div>
-            </div>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>,
+
+              <div className="flex shrink-0 items-center justify-between gap-6 px-[var(--gutter)] pb-6">
+                <p className="max-w-xl text-[0.8125rem] leading-relaxed font-light text-paper/60">
+                  {current.alt}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => step(-1)}
+                    className="label border border-paper/25 px-4 py-3 text-paper/80 transition-colors duration-500 hover:border-paper hover:text-paper"
+                    aria-label="Imagen anterior"
+                  >
+                    <svg aria-hidden viewBox="0 0 24 10" className="h-2 w-5 rotate-180" fill="none">
+                      <path d="M0 5h22M17.5 0.5 22 5l-4.5 4.5" stroke="currentColor" strokeWidth="1" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => step(1)}
+                    className="label border border-paper/25 px-4 py-3 text-paper/80 transition-colors duration-500 hover:border-paper hover:text-paper"
+                    aria-label="Imagen siguiente"
+                  >
+                    <svg aria-hidden viewBox="0 0 24 10" className="h-2 w-5" fill="none">
+                      <path d="M0 5h22M17.5 0.5 22 5l-4.5 4.5" stroke="currentColor" strokeWidth="1" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>,
             document.body,
           )
         : null}

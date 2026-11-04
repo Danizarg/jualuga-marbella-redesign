@@ -395,3 +395,25 @@
     transform: none !important;
   }
 }
+
+/* Lightbox. CSS rather than AnimatePresence: a nested presence animation
+   inside the dialog stopped the outer exit from ever completing, which left
+   the overlay stuck on screen after closing. */
+
+@keyframes juluga-lightbox-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes juluga-frame-in {
+  from { opacity: 0; transform: scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+@utility lightbox-in {
+  animation: juluga-lightbox-in 0.4s var(--ease-editorial) both;
+}
+
+@utility frame-in {
+  animation: juluga-frame-in 0.5s var(--ease-editorial) both;
+}

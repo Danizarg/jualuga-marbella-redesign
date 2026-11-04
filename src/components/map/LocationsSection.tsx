@@ -112,8 +112,9 @@ export function LocationsSection() {
         <div className="relative aspect-[4/3] w-full overflow-hidden border border-sand-deep/50 lg:aspect-[5/4]">
           <LocationMap selected={selected} onSelect={setSelected} />
         </div>
-        <p className="label mt-4 text-stone/70">
-          Plano del Casco Antiguo de Marbella · pulse un punto para situarlo
+        {/* Width-capped so it never runs under the floating enquiry button */}
+        <p className="label mt-4 max-w-sm text-stone/70">
+          Casco Antiguo de Marbella · pulse un punto
         </p>
       </div>
     </div>
